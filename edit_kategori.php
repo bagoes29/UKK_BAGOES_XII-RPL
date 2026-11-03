@@ -1,3 +1,4 @@
+
 <?php
 session_start();
 require_once "config.php";
@@ -54,6 +55,7 @@ if (!$kategori) {
 
 if ($_SERVER["REQUEST_METHOD"] === "POST") {
 
+    // Periksa token keamanan
     if (
         !isset($_POST["csrf_token"]) ||
         !hash_equals($token, $_POST["csrf_token"])
@@ -73,9 +75,35 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
 
             try {
 
+                // Mulai transaksi database
+                $pdo->beginTransaction();
+
+                // Kunci data kategori
+                $cek = $pdo->prepare(
+                    "SELECT *
+                     FROM kategori
+                     WHERE id_kategori = ?
+                     FOR UPDATE"
+                );
+
+                $cek->execute([$id]);
+
+                $dataLama = $cek->fetch(PDO::FETCH_ASSOC);
+
+                if (!$dataLama) {
+                    throw new Exception(
+                        "Data kategori tidak ditemukan."
+                    );
+                }
+
+                // ==================================
+                // UPDATE DATA KATEGORI
+                // ==================================
+
                 $update = $pdo->prepare(
                     "UPDATE kategori
-                     SET nama_kategori = ?, deskripsi = ?
+                     SET nama_kategori = ?,
+                         deskripsi = ?
                      WHERE id_kategori = ?"
                 );
 
@@ -85,17 +113,80 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
                     $id
                 ]);
 
+                // ==================================
+                // PERIKSA PERUBAHAN DATA
+                // ==================================
+
+                $perubahan = [];
+
+                if ($dataLama["nama_kategori"] !== $nama) {
+
+                    $perubahan[] =
+                        "Nama kategori: " .
+                        $dataLama["nama_kategori"] .
+                        " menjadi " . $nama;
+                }
+
+                if (($dataLama["deskripsi"] ?? "") !== $deskripsi) {
+
+                    $perubahan[] =
+                        "Deskripsi kategori diperbarui";
+                }
+
+                if (count($perubahan) > 0) {
+
+                    $keterangan = implode("; ", $perubahan);
+
+                } else {
+
+                    $keterangan = "Data disimpan tanpa perubahan nilai.";
+                }
+
+                // ==================================
+                // CATAT AKTIVITAS EDIT KATEGORI
+                // ==================================
+
+                $log = $pdo->prepare(
+                    "INSERT INTO log_aktivitas
+                    (id_user, aktivitas)
+                    VALUES (?, ?)"
+                );
+
+                $log->execute([
+                    $_SESSION["id"],
+                    "Mengubah kategori ID " .
+                    $id . " (" . $nama . "): " .
+                    $keterangan
+                ]);
+
+                // ==================================
+                // SIMPAN TRANSAKSI
+                // ==================================
+
+                $pdo->commit();
+
                 header("Location: kategori.php?pesan=edit");
                 exit;
 
             } catch (PDOException $e) {
 
+                if ($pdo->inTransaction()) {
+                    $pdo->rollBack();
+                }
+
                 $error = "Gagal memperbarui kategori.";
 
+            } catch (Exception $e) {
+
+                if ($pdo->inTransaction()) {
+                    $pdo->rollBack();
+                }
+
+                $error = $e->getMessage();
             }
         }
 
-        // Menampilkan kembali data yang dimasukkan
+        // Tampilkan kembali data jika terjadi kesalahan
         $kategori["nama_kategori"] = $nama;
         $kategori["deskripsi"] = $deskripsi;
     }
@@ -133,6 +224,7 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
             background: white;
             padding: 25px;
             border-radius: 10px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.08);
         }
 
         h2 {
@@ -142,6 +234,7 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
         label {
             display: block;
             margin-top: 15px;
+            font-weight: bold;
         }
 
         input, textarea, button {
@@ -175,11 +268,24 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
             text-decoration: none;
         }
 
+        .kembali:hover {
+            text-decoration: underline;
+        }
+
         .error {
             background: #fee2e2;
             color: #b91c1c;
             padding: 10px;
             border-radius: 5px;
+        }
+
+        .info {
+            background: #eff6ff;
+            color: #1e40af;
+            padding: 12px;
+            border-radius: 5px;
+            margin-top: 15px;
+            font-size: 13px;
         }
 
     </style>
@@ -203,6 +309,11 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
         </p>
 
     <?php endif; ?>
+
+    <div class="info">
+        Perubahan nama dan deskripsi kategori akan tercatat
+        otomatis di Log Aktivitas.
+    </div>
 
     <form method="POST">
 

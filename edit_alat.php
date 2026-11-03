@@ -1,3 +1,4 @@
+
 <?php
 session_start();
 require_once "config.php";
@@ -74,7 +75,10 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
         $id_kategori = (int) ($_POST["id_kategori"] ?? 0);
         $kode_alat = trim($_POST["kode_alat"] ?? "");
         $nama_alat = trim($_POST["nama_alat"] ?? "");
-        $jumlah = (int) ($_POST["jumlah"] ?? 0);
+        $jumlah = filter_var(
+            $_POST["jumlah"] ?? "",
+            FILTER_VALIDATE_INT
+        );
         $kondisi = $_POST["kondisi"] ?? "";
         $lokasi = trim($_POST["lokasi"] ?? "");
 
@@ -84,83 +88,264 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
             "Rusak Berat"
         ];
 
-        // Periksa kategori
-        $cekKategori = $pdo->prepare(
-            "SELECT id_kategori FROM kategori WHERE id_kategori = ?"
-        );
-
-        $cekKategori->execute([$id_kategori]);
-
-        $kategoriAda = $cekKategori->fetch();
+        // ==================================
+        // VALIDASI DATA
+        // ==================================
 
         if (
             $id_kategori <= 0 ||
-            !$kategoriAda ||
             $kode_alat === "" ||
             $nama_alat === "" ||
+            $jumlah === false ||
             $jumlah <= 0 ||
             !in_array($kondisi, $daftarKondisi, true)
         ) {
+
             $error = "Semua data wajib diisi dengan benar.";
 
         } else {
 
-            // Hitung jumlah alat yang sedang dipinjam
-            $jumlahDipinjam = (int) $alat["jumlah"]
-                            - (int) $alat["stok"];
+            try {
 
-            // Jumlah total tidak boleh lebih kecil
-            // dari jumlah alat yang sedang dipinjam
-            if ($jumlah < $jumlahDipinjam) {
+                // Mulai transaksi database
+                $pdo->beginTransaction();
 
-                $error = "Jumlah alat tidak boleh lebih kecil dari jumlah yang sedang dipinjam.";
+                // Kunci data alat agar tidak diedit bersamaan
+                $cekAlat = $pdo->prepare(
+                    "SELECT *
+                     FROM alat
+                     WHERE id_alat = ?
+                     FOR UPDATE"
+                );
 
-            } else {
+                $cekAlat->execute([$id]);
 
-                // Hitung stok baru
+                $dataLama = $cekAlat->fetch(PDO::FETCH_ASSOC);
+
+                if (!$dataLama) {
+                    throw new Exception(
+                        "Data alat tidak ditemukan."
+                    );
+                }
+
+                // ==================================
+                // VALIDASI KATEGORI
+                // ==================================
+
+                $cekKategori = $pdo->prepare(
+                    "SELECT id_kategori
+                     FROM kategori
+                     WHERE id_kategori = ?"
+                );
+
+                $cekKategori->execute([$id_kategori]);
+
+                if (!$cekKategori->fetch()) {
+                    throw new Exception(
+                        "Kategori alat tidak ditemukan."
+                    );
+                }
+
+                // ==================================
+                // HITUNG STOK YANG SEDANG DIPINJAM
+                // ==================================
+
+                $jumlahDipinjam =
+                    (int) $dataLama["jumlah"] -
+                    (int) $dataLama["stok"];
+
+                // Pengaman jika data stok sebelumnya tidak sesuai
+                $jumlahDipinjam = max(0, $jumlahDipinjam);
+
+                if ($jumlah < $jumlahDipinjam) {
+
+                    throw new Exception(
+                        "Jumlah alat tidak boleh lebih kecil dari jumlah yang sedang dipinjam."
+                    );
+                }
+
+                // Hitung stok tersedia yang baru
                 $stokBaru = $jumlah - $jumlahDipinjam;
 
-                try {
+                // ==================================
+                // AMBIL NAMA KATEGORI
+                // ==================================
 
-                    $update = $pdo->prepare(
-                        "UPDATE alat SET
-                            id_kategori = ?,
-                            kode_alat = ?,
-                            nama_alat = ?,
-                            jumlah = ?,
-                            stok = ?,
-                            kondisi = ?,
-                            lokasi = ?
-                         WHERE id_alat = ?"
-                    );
+                $namaKategoriLama = $dataLama["id_kategori"];
+                $namaKategoriBaru = $id_kategori;
 
-                    $update->execute([
-                        $id_kategori,
-                        $kode_alat,
-                        $nama_alat,
-                        $jumlah,
-                        $stokBaru,
-                        $kondisi,
-                        $lokasi,
-                        $id
-                    ]);
+                $kategoriLama = $pdo->prepare(
+                    "SELECT nama_kategori
+                     FROM kategori
+                     WHERE id_kategori = ?"
+                );
 
-                    header("Location: alat.php?pesan=edit");
-                    exit;
+                $kategoriLama->execute([
+                    $dataLama["id_kategori"]
+                ]);
 
-                } catch (PDOException $e) {
+                $hasilKategoriLama = $kategoriLama->fetchColumn();
 
-                    $error = "Gagal memperbarui data. Kode alat mungkin sudah digunakan.";
-
+                if ($hasilKategoriLama !== false) {
+                    $namaKategoriLama = $hasilKategoriLama;
                 }
+
+                $kategoriBaru = $pdo->prepare(
+                    "SELECT nama_kategori
+                     FROM kategori
+                     WHERE id_kategori = ?"
+                );
+
+                $kategoriBaru->execute([$id_kategori]);
+
+                $hasilKategoriBaru = $kategoriBaru->fetchColumn();
+
+                if ($hasilKategoriBaru !== false) {
+                    $namaKategoriBaru = $hasilKategoriBaru;
+                }
+
+                // ==================================
+                // UPDATE DATA ALAT
+                // ==================================
+
+                $update = $pdo->prepare(
+                    "UPDATE alat SET
+                        id_kategori = ?,
+                        kode_alat = ?,
+                        nama_alat = ?,
+                        jumlah = ?,
+                        stok = ?,
+                        kondisi = ?,
+                        lokasi = ?
+                     WHERE id_alat = ?"
+                );
+
+                $update->execute([
+                    $id_kategori,
+                    $kode_alat,
+                    $nama_alat,
+                    $jumlah,
+                    $stokBaru,
+                    $kondisi,
+                    $lokasi,
+                    $id
+                ]);
+
+                // ==================================
+                // BANDINGKAN DATA LAMA DAN BARU
+                // ==================================
+
+                $perubahan = [];
+
+                if (
+                    (int) $dataLama["id_kategori"] !== $id_kategori
+                ) {
+                    $perubahan[] =
+                        "Kategori: " . $namaKategoriLama .
+                        " menjadi " . $namaKategoriBaru;
+                }
+
+                if ($dataLama["kode_alat"] !== $kode_alat) {
+                    $perubahan[] =
+                        "Kode alat: " . $dataLama["kode_alat"] .
+                        " menjadi " . $kode_alat;
+                }
+
+                if ($dataLama["nama_alat"] !== $nama_alat) {
+                    $perubahan[] =
+                        "Nama alat: " . $dataLama["nama_alat"] .
+                        " menjadi " . $nama_alat;
+                }
+
+                if ((int) $dataLama["jumlah"] !== $jumlah) {
+                    $perubahan[] =
+                        "Jumlah: " . $dataLama["jumlah"] .
+                        " menjadi " . $jumlah;
+                }
+
+                if ((int) $dataLama["stok"] !== $stokBaru) {
+                    $perubahan[] =
+                        "Stok: " . $dataLama["stok"] .
+                        " menjadi " . $stokBaru;
+                }
+
+                if ($dataLama["kondisi"] !== $kondisi) {
+                    $perubahan[] =
+                        "Kondisi: " . $dataLama["kondisi"] .
+                        " menjadi " . $kondisi;
+                }
+
+                if (($dataLama["lokasi"] ?? "") !== $lokasi) {
+                    $perubahan[] =
+                        "Lokasi: " .
+                        ($dataLama["lokasi"] ?: "-") .
+                        " menjadi " .
+                        ($lokasi ?: "-");
+                }
+
+                // ==================================
+                // CATAT AKTIVITAS EDIT ALAT
+                // ==================================
+
+                if (count($perubahan) > 0) {
+
+                    $keterangan = implode("; ", $perubahan);
+
+                } else {
+
+                    $keterangan = "Data disimpan tanpa perubahan nilai.";
+                }
+
+                $log = $pdo->prepare(
+                    "INSERT INTO log_aktivitas
+                    (id_user, aktivitas)
+                    VALUES (?, ?)"
+                );
+
+                $log->execute([
+                    $_SESSION["id"],
+                    "Mengubah data alat ID " .
+                    $id . " (" . $nama_alat . "): " .
+                    $keterangan
+                ]);
+
+                // ==================================
+                // SIMPAN TRANSAKSI
+                // ==================================
+
+                $pdo->commit();
+
+                header("Location: alat.php?pesan=edit");
+                exit;
+
+            } catch (PDOException $e) {
+
+                if ($pdo->inTransaction()) {
+                    $pdo->rollBack();
+                }
+
+                $error = "Gagal memperbarui data. Kode alat mungkin sudah digunakan.";
+
+            } catch (Exception $e) {
+
+                if ($pdo->inTransaction()) {
+                    $pdo->rollBack();
+                }
+
+                $error = $e->getMessage();
+
             }
         }
 
-        // Tampilkan kembali data jika terjadi kesalahan
+        // Tampilkan kembali data setelah validasi gagal
         $alat["id_kategori"] = $id_kategori;
         $alat["kode_alat"] = $kode_alat;
         $alat["nama_alat"] = $nama_alat;
-        $alat["jumlah"] = $jumlah;
+
+        if ($jumlah !== false) {
+            $alat["jumlah"] = $jumlah;
+        }
+
         $alat["kondisi"] = $kondisi;
         $alat["lokasi"] = $lokasi;
     }
@@ -235,6 +420,10 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
         .kembali {
             color: #2563eb;
             text-decoration: none;
+        }
+
+        .kembali:hover {
+            text-decoration: underline;
         }
 
         .error {

@@ -1,3 +1,4 @@
+
 <?php
 session_start();
 require_once "config.php";
@@ -39,7 +40,6 @@ $hariIni = date("Y-m-d");
 
 if (isset($_POST["ajukan"])) {
 
-    // Periksa token keamanan
     if (
         !isset($_POST["csrf_token"]) ||
         !hash_equals($token, $_POST["csrf_token"])
@@ -152,10 +152,10 @@ if (isset($_POST["ajukan"])) {
                         $keperluan
                     ]);
 
-                    // Ambil ID peminjaman yang baru dibuat
+                    // Ambil ID peminjaman
                     $id_peminjaman = $pdo->lastInsertId();
 
-                    // Simpan detail alat yang dipinjam
+                    // Simpan detail peminjaman
                     $detail = $pdo->prepare(
                         "INSERT INTO detail_peminjaman
                         (
@@ -172,6 +172,18 @@ if (isset($_POST["ajukan"])) {
                         $jumlah
                     ]);
 
+                    // Catat aktivitas
+                    $log = $pdo->prepare(
+                        "INSERT INTO log_aktivitas
+                        (id_user, aktivitas)
+                        VALUES (?, ?)"
+                    );
+
+                    $log->execute([
+                        $_SESSION["id"],
+                        "Mengajukan peminjaman ID " . $id_peminjaman
+                    ]);
+
                     // Simpan transaksi
                     $pdo->commit();
 
@@ -181,7 +193,6 @@ if (isset($_POST["ajukan"])) {
 
             } catch (PDOException $e) {
 
-                // Batalkan transaksi jika terjadi kesalahan
                 if ($pdo->inTransaction()) {
                     $pdo->rollBack();
                 }
@@ -193,7 +204,7 @@ if (isset($_POST["ajukan"])) {
 }
 
 // ==================================
-// AMBIL DAFTAR ALAT YANG TERSEDIA
+// AMBIL DAFTAR ALAT TERSEDIA
 // ==================================
 
 $sqlAlat = $pdo->query(
@@ -213,95 +224,423 @@ $daftarAlat = $sqlAlat->fetchAll(PDO::FETCH_ASSOC);
 <head>
 
     <meta charset="UTF-8">
-
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-    <title>Pengajuan Peminjaman Alat</title>
+    <title>Ajukan Peminjaman | Sistem Peminjaman Alat</title>
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap" rel="stylesheet">
 
     <style>
 
         * {
             box-sizing: border-box;
+            margin: 0;
+            padding: 0;
         }
 
         body {
-            font-family: Arial, sans-serif;
-            background: #f1f5f9;
-            margin: 0;
-            padding: 25px;
+            font-family: 'DM Sans', sans-serif;
+            background: #f4f7fc;
+            color: #24324b;
         }
 
-        .container {
-            max-width: 650px;
-            margin: 30px auto;
+        .layout {
+            display: flex;
+            min-height: 100vh;
+        }
+
+        /* SIDEBAR */
+
+        .sidebar {
+            width: 250px;
+            background: #111c38;
+            color: white;
+            padding: 28px 18px;
+            flex-shrink: 0;
+        }
+
+        .brand {
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            font-size: 19px;
+            font-weight: 800;
+            padding: 0 12px;
+            margin-bottom: 38px;
+            line-height: 1.5;
+        }
+
+        .brand span {
+            color: #7192ff;
+        }
+
+        .menu-label {
+            color: #8492b2;
+            font-size: 10px;
+            font-weight: 700;
+            letter-spacing: 1.5px;
+            padding: 0 12px;
+            margin-bottom: 12px;
+        }
+
+        .menu a {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            color: #aebbd5;
+            text-decoration: none;
+            padding: 13px 14px;
+            border-radius: 11px;
+            margin-bottom: 7px;
+            font-size: 13px;
+            font-weight: 600;
+            transition: .2s;
+        }
+
+        .menu a:hover {
+            background: #202f52;
+            color: white;
+        }
+
+        .menu a.active {
+            background: linear-gradient(135deg, #4169f5, #6384ff);
+            color: white;
+            box-shadow: 0 6px 16px rgba(65, 105, 245, .25);
+        }
+
+        /* MAIN */
+
+        .main {
+            flex: 1;
+            min-width: 0;
+            padding: 28px 35px;
+        }
+
+        /* TOPBAR */
+
+        .topbar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 15px;
+            margin-bottom: 28px;
+        }
+
+        .topbar h3 {
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            font-size: 19px;
+            font-weight: 800;
+        }
+
+        .profile {
+            display: flex;
+            align-items: center;
+            gap: 11px;
             background: white;
-            padding: 25px;
-            border-radius: 10px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+            padding: 9px 15px;
+            border-radius: 13px;
+            border: 1px solid #edf0f6;
         }
 
-        h2 {
-            color: #1e40af;
+        .avatar {
+            width: 36px;
+            height: 36px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            border-radius: 11px;
+            background: #e9efff;
+            color: #4169f5;
+            font-weight: 800;
+        }
+
+        .profile-name {
+            font-size: 12px;
+            font-weight: 700;
+        }
+
+        .profile-role {
+            font-size: 10px;
+            color: #8b96aa;
+        }
+
+        /* HEADER */
+
+        .page-header {
+            background: linear-gradient(120deg, #3158df, #6384ff);
+            padding: 28px 30px;
+            border-radius: 20px;
+            color: white;
+            margin-bottom: 25px;
+            box-shadow: 0 10px 25px rgba(65, 105, 245, .15);
+        }
+
+        .page-header h1 {
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            font-size: 23px;
+            font-weight: 800;
+            margin-bottom: 7px;
+        }
+
+        .page-header p {
+            font-size: 13px;
+            opacity: .88;
+            line-height: 1.6;
+        }
+
+        /* CONTENT */
+
+        .content-card {
+            background: white;
+            border: 1px solid #edf0f6;
+            border-radius: 18px;
+            padding: 28px;
+            box-shadow: 0 4px 15px rgba(30, 50, 90, .035);
+            max-width: 850px;
+        }
+
+        .content-header {
+            margin-bottom: 22px;
+        }
+
+        .content-header h3 {
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            font-size: 17px;
+            font-weight: 800;
+            color: #263b67;
+        }
+
+        .content-header p {
+            color: #929caf;
+            font-size: 12px;
+            margin-top: 6px;
+            line-height: 1.6;
+        }
+
+        /* ALERT */
+
+        .alert {
+            padding: 14px 16px;
+            border-radius: 11px;
+            margin-bottom: 20px;
+            font-size: 12px;
+            line-height: 1.6;
+        }
+
+        .pesan-sukses {
+            background: #e9f8ef;
+            color: #16804a;
+            border: 1px solid #c9eed7;
+        }
+
+        .pesan-error {
+            background: #fff0f0;
+            color: #b91c1c;
+            border: 1px solid #ffd6d6;
+        }
+
+        .info {
+            background: #eff4ff;
+            color: #4169c9;
+            border: 1px solid #e0e9ff;
+            padding: 14px 16px;
+            border-radius: 11px;
+            margin-bottom: 22px;
+            font-size: 12px;
+            line-height: 1.7;
+        }
+
+        /* FORM */
+
+        .form-group {
+            margin-bottom: 19px;
         }
 
         label {
             display: block;
-            margin-top: 15px;
-            font-weight: bold;
+            color: #344563;
+            font-size: 12px;
+            font-weight: 700;
+            margin-bottom: 8px;
         }
 
-        input, select, textarea, button {
+        .required {
+            color: #e05252;
+        }
+
+        input,
+        select,
+        textarea {
             width: 100%;
-            padding: 11px;
-            margin-top: 7px;
-            border-radius: 5px;
+            padding: 13px 14px;
+            border: 1px solid #e1e6ef;
+            border-radius: 10px;
+            background: #fff;
+            color: #344563;
+            font-family: 'DM Sans', sans-serif;
+            font-size: 13px;
+            outline: none;
+            transition: .2s;
         }
 
-        input, select, textarea {
-            border: 1px solid #ccc;
+        input:focus,
+        select:focus,
+        textarea:focus {
+            border-color: #6384ff;
+            box-shadow: 0 0 0 3px rgba(65, 105, 245, .10);
+        }
+
+        input::placeholder,
+        textarea::placeholder {
+            color: #aab3c2;
         }
 
         textarea {
             resize: vertical;
+            min-height: 115px;
+            line-height: 1.6;
         }
 
-        button {
-            background: #2563eb;
-            color: white;
+        .form-hint {
+            color: #929caf;
+            font-size: 10px;
+            margin-top: 7px;
+        }
+
+        .form-row {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 17px;
+        }
+
+        /* BUTTON */
+
+        .form-actions {
+            display: flex;
+            gap: 12px;
+            margin-top: 25px;
+        }
+
+        .btn {
             border: none;
+            background: linear-gradient(135deg, #4169f5, #6384ff);
+            color: white;
+            padding: 13px 20px;
+            border-radius: 10px;
+            font-family: inherit;
+            font-size: 12px;
+            font-weight: 700;
             cursor: pointer;
-            margin-top: 20px;
-        }
-
-        button:hover {
-            background: #1d4ed8;
-        }
-
-        .kembali {
-            color: #2563eb;
             text-decoration: none;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            transition: .2s;
         }
 
-        .pesan-sukses {
-            background: #dcfce7;
-            color: #166534;
-            padding: 12px;
-            border-radius: 5px;
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 13px rgba(65, 105, 245, .2);
         }
 
-        .pesan-error {
-            background: #fee2e2;
-            color: #b91c1c;
-            padding: 12px;
-            border-radius: 5px;
+        .btn-secondary {
+            background: #edf2ff;
+            color: #4169f5;
         }
 
-        .info {
-            background: #eff6ff;
-            color: #1e40af;
-            padding: 12px;
-            border-radius: 5px;
-            margin-top: 15px;
+        .btn-secondary:hover {
+            background: #e2eaff;
+            box-shadow: none;
+        }
+
+        /* EMPTY */
+
+        .empty-state {
+            background: #fff7e6;
+            color: #9a6815;
+            border: 1px solid #f5e5bd;
+            border-radius: 12px;
+            padding: 22px;
+            font-size: 13px;
+            line-height: 1.7;
+        }
+
+        /* RESPONSIVE */
+
+        @media (max-width: 900px) {
+            .sidebar {
+                width: 215px;
+            }
+
+            .main {
+                padding: 24px 20px;
+            }
+        }
+
+        @media (max-width: 650px) {
+            .layout {
+                flex-direction: column;
+            }
+
+            .sidebar {
+                width: 100%;
+                padding: 18px;
+            }
+
+            .brand {
+                margin-bottom: 18px;
+            }
+
+            .menu {
+                display: grid;
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+                gap: 5px;
+            }
+
+            .menu-label {
+                margin-bottom: 10px;
+            }
+
+            .menu a {
+                margin-bottom: 0;
+                font-size: 11px;
+                padding: 11px;
+            }
+
+            .main {
+                padding: 20px 14px;
+            }
+
+            .topbar {
+                align-items: flex-start;
+            }
+
+            .page-header {
+                padding: 23px 20px;
+            }
+
+            .page-header h1 {
+                font-size: 19px;
+            }
+
+            .content-card {
+                padding: 19px;
+            }
+
+            .form-row {
+                grid-template-columns: 1fr;
+                gap: 0;
+            }
+
+            .form-actions {
+                flex-direction: column;
+            }
+
+            .btn {
+                width: 100%;
+            }
         }
 
     </style>
@@ -310,134 +649,297 @@ $daftarAlat = $sqlAlat->fetchAll(PDO::FETCH_ASSOC);
 
 <body>
 
-<div class="container">
+<div class="layout">
 
-    <h2>FORM PENGAJUAN PEMINJAMAN</h2>
+    <!-- SIDEBAR -->
 
-    <a href="dashboard.php" class="kembali">
-        ← Kembali ke Dashboard
-    </a>
+    <aside class="sidebar">
 
-    <p>
-        Nama Peminjam:
-        <strong>
-            <?= htmlspecialchars($_SESSION["nama"]) ?>
-        </strong>
-    </p>
+        <div class="brand">
+            SISTEM <span>PEMINJAMAN</span>
+            <br>ALAT
+        </div>
 
-    <!-- PESAN BERHASIL -->
+        <div class="menu-label">MENU PEMINJAM</div>
 
-    <?php if (isset($_GET["pesan"]) && $_GET["pesan"] === "berhasil"): ?>
+        <nav class="menu">
 
-        <p class="pesan-sukses">
-            Pengajuan peminjaman berhasil dikirim!
-            Silakan menunggu persetujuan Petugas.
-        </p>
+            <a href="dashboard.php">
+                <span>▦</span> Dashboard
+            </a>
 
-    <?php endif; ?>
+            <a href="daftar_alat.php">
+                <span>▣</span> Daftar Alat
+            </a>
 
-    <!-- PESAN ERROR -->
+            <a href="ajukan_peminjaman.php" class="active">
+                <span>＋</span> Ajukan Peminjaman
+            </a>
 
-    <?php if ($error !== ""): ?>
+            <a href="riwayat_peminjaman.php">
+                <span>◷</span> Riwayat Peminjaman
+            </a>
 
-        <p class="pesan-error">
-            <?= htmlspecialchars($error) ?>
-        </p>
+        </nav>
 
-    <?php endif; ?>
+    </aside>
 
-    <!-- FORM PEMINJAMAN -->
+    <!-- MAIN CONTENT -->
 
-    <?php if (count($daftarAlat) > 0): ?>
+    <main class="main">
 
-        <form method="POST">
+        <!-- TOPBAR -->
 
-            <input
-                type="hidden"
-                name="csrf_token"
-                value="<?= htmlspecialchars($token) ?>"
-            >
+        <div class="topbar">
 
-            <label>Pilih Alat</label>
+            <h3>Ajukan Peminjaman</h3>
 
-            <select name="id_alat" required>
+            <div class="profile">
 
-                <option value="">
-                    -- Pilih Alat --
-                </option>
+                <div class="avatar">
+                    <?= strtoupper(substr($_SESSION["nama"], 0, 1)) ?>
+                </div>
 
-                <?php foreach ($daftarAlat as $item): ?>
+                <div>
+                    <div class="profile-name">
+                        <?= htmlspecialchars($_SESSION["nama"]) ?>
+                    </div>
 
-                    <option
-                        value="<?= (int) $item["id_alat"] ?>"
-                        <?= (string) $id_alat === (string) $item["id_alat"] ? "selected" : "" ?>
+                    <div class="profile-role">
+                        Peminjam
+                    </div>
+                </div>
+
+            </div>
+
+        </div>
+
+        <!-- HEADER -->
+
+        <section class="page-header">
+
+            <h1>Form Pengajuan Peminjaman</h1>
+
+            <p>
+                Lengkapi formulir berikut untuk mengajukan peminjaman alat.
+                Pengajuan akan diperiksa oleh Petugas.
+            </p>
+
+        </section>
+
+        <!-- FORM CARD -->
+
+        <section class="content-card">
+
+            <div class="content-header">
+
+                <h3>Informasi Peminjaman</h3>
+
+                <p>
+                    Nama peminjam:
+                    <strong><?= htmlspecialchars($_SESSION["nama"]) ?></strong>
+                </p>
+
+            </div>
+
+            <!-- PESAN BERHASIL -->
+
+            <?php if (isset($_GET["pesan"]) && $_GET["pesan"] === "berhasil"): ?>
+
+                <div class="alert pesan-sukses">
+                    ✓ Pengajuan peminjaman berhasil dikirim!
+                    Silakan menunggu persetujuan Petugas.
+                </div>
+
+            <?php endif; ?>
+
+            <!-- PESAN ERROR -->
+
+            <?php if ($error !== ""): ?>
+
+                <div class="alert pesan-error">
+                    <?= htmlspecialchars($error) ?>
+                </div>
+
+            <?php endif; ?>
+
+            <?php if (count($daftarAlat) > 0): ?>
+
+                <div class="info">
+                    Pastikan jumlah alat yang diajukan tidak melebihi stok tersedia.
+                    Periksa juga tanggal peminjaman dan tanggal rencana pengembalian
+                    sebelum mengirim formulir.
+                </div>
+
+                <form method="POST">
+
+                    <input
+                        type="hidden"
+                        name="csrf_token"
+                        value="<?= htmlspecialchars($token) ?>"
                     >
-                        <?= htmlspecialchars($item["nama_alat"]) ?>
-                        - Stok: <?= (int) $item["stok"] ?>
-                    </option>
 
-                <?php endforeach; ?>
+                    <!-- PILIH ALAT -->
 
-            </select>
+                    <div class="form-group">
 
-            <label>Jumlah yang Dipinjam</label>
+                        <label>
+                            Pilih Alat <span class="required">*</span>
+                        </label>
 
-            <input
-                type="number"
-                name="jumlah"
-                min="1"
-                value="<?= htmlspecialchars((string) $jumlah) ?>"
-                placeholder="Masukkan jumlah alat"
-                required
-            >
+                        <select name="id_alat" required>
 
-            <label>Tanggal Pinjam</label>
+                            <option value="">
+                                -- Pilih Alat --
+                            </option>
 
-            <input
-                type="date"
-                name="tanggal_pinjam"
-                min="<?= $hariIni ?>"
-                value="<?= htmlspecialchars($tanggal_pinjam) ?>"
-                required
-            >
+                            <?php foreach ($daftarAlat as $item): ?>
 
-            <label>Tanggal Rencana Kembali</label>
+                                <option
+                                    value="<?= (int) $item["id_alat"] ?>"
+                                    <?= (string) $id_alat === (string) $item["id_alat"] ? "selected" : "" ?>
+                                >
+                                    <?= htmlspecialchars($item["nama_alat"]) ?>
+                                    (<?= htmlspecialchars($item["kode_alat"]) ?>)
+                                    - Stok: <?= (int) $item["stok"] ?>
+                                </option>
 
-            <input
-                type="date"
-                name="tanggal_kembali"
-                min="<?= $hariIni ?>"
-                value="<?= htmlspecialchars($tanggal_kembali) ?>"
-                required
-            >
+                            <?php endforeach; ?>
 
-            <label>Keperluan Peminjaman</label>
+                        </select>
 
-            <textarea
-                name="keperluan"
-                rows="4"
-                placeholder="Tuliskan keperluan peminjaman alat"
-                required
-            ><?= htmlspecialchars($keperluan) ?></textarea>
+                        <p class="form-hint">
+                            Hanya alat dengan kondisi Baik dan stok tersedia yang ditampilkan.
+                        </p>
 
-            <button type="submit" name="ajukan">
-                Kirim Pengajuan Peminjaman
-            </button>
+                    </div>
 
-        </form>
+                    <!-- JUMLAH -->
 
-    <?php else: ?>
+                    <div class="form-group">
 
-        <p class="pesan-error">
-            Saat ini belum ada alat yang tersedia untuk dipinjam.
-        </p>
+                        <label>
+                            Jumlah yang Dipinjam <span class="required">*</span>
+                        </label>
 
-    <?php endif; ?>
+                        <input
+                            type="number"
+                            name="jumlah"
+                            min="1"
+                            value="<?= htmlspecialchars((string) $jumlah) ?>"
+                            placeholder="Masukkan jumlah alat"
+                            required
+                        >
 
-    <div class="info">
-        Pengajuan yang dikirim akan memiliki status
-        <strong>Menunggu</strong> sampai diperiksa oleh Petugas.
-    </div>
+                    </div>
+
+                    <!-- TANGGAL -->
+
+                    <div class="form-row">
+
+                        <div class="form-group">
+
+                            <label>
+                                Tanggal Pinjam <span class="required">*</span>
+                            </label>
+
+                            <input
+                                type="date"
+                                name="tanggal_pinjam"
+                                min="<?= htmlspecialchars($hariIni) ?>"
+                                value="<?= htmlspecialchars($tanggal_pinjam) ?>"
+                                required
+                            >
+
+                        </div>
+
+                        <div class="form-group">
+
+                            <label>
+                                Tanggal Rencana Kembali <span class="required">*</span>
+                            </label>
+
+                            <input
+                                type="date"
+                                name="tanggal_kembali"
+                                min="<?= htmlspecialchars($hariIni) ?>"
+                                value="<?= htmlspecialchars($tanggal_kembali) ?>"
+                                required
+                            >
+
+                        </div>
+
+                    </div>
+
+                    <!-- KEPERLUAN -->
+
+                    <div class="form-group">
+
+                        <label>
+                            Keperluan Peminjaman <span class="required">*</span>
+                        </label>
+
+                        <textarea
+                            name="keperluan"
+                            rows="4"
+                            placeholder="Tuliskan keperluan peminjaman alat..."
+                            required
+                        ><?= htmlspecialchars($keperluan) ?></textarea>
+
+                        <p class="form-hint">
+                            Jelaskan tujuan penggunaan alat yang akan dipinjam.
+                        </p>
+
+                    </div>
+
+                    <!-- BUTTON -->
+
+                    <div class="form-actions">
+
+                        <button type="submit" name="ajukan" class="btn">
+                            ✓ Kirim Pengajuan Peminjaman
+                        </button>
+
+                        <a href="dashboard.php" class="btn btn-secondary">
+                            Kembali ke Dashboard
+                        </a>
+
+                    </div>
+
+                </form>
+
+            <?php else: ?>
+
+                <div class="empty-state">
+                    <strong>Belum ada alat yang tersedia.</strong>
+                    <br>
+                    Saat ini belum ada alat dengan kondisi Baik dan stok lebih dari
+                    nol. Silakan periksa kembali nanti.
+                </div>
+
+                <div class="form-actions">
+
+                    <a href="daftar_alat.php" class="btn">
+                        Lihat Daftar Alat
+                    </a>
+
+                    <a href="dashboard.php" class="btn btn-secondary">
+                        Kembali ke Dashboard
+                    </a>
+
+                </div>
+
+            <?php endif; ?>
+
+            <div class="info" style="margin-top: 22px; margin-bottom: 0;">
+                <strong>Informasi:</strong>
+                Setelah dikirim, pengajuan akan memiliki status
+                <strong>Menunggu</strong> sampai diperiksa oleh Petugas.
+            </div>
+
+        </section>
+
+    </main>
 
 </div>
 
